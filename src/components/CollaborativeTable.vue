@@ -1,38 +1,24 @@
 <template>
   <div class="collaborative-table-container">
-    <TableHeader 
-      :online-users="userStore.onlineUsers"
-      :online-count="userStore.onlineUserCount"
-    />
-    
-    <TableToolbar 
-      @add-row="handleAddRow"
-      @add-column="handleAddColumn"
-      @export="handleExport"
-      @simulate="simulateRemoteEdit"
-      :is-connected="userStore.isConnected"
-    />
-    
-    <TableGrid 
-      :columns="tableStore.columns"
-      :table-data="tableStore.tableData"
-      :get-cell-value="tableStore.getCellValue"
-      :get-editing-user="getEditingUser"
-      :get-cell-class="getCellClass"
-      @cell-input="handleCellInput"
-      @cell-focus="handleCellFocus"
-      @cell-blur="handleCellBlur"
-      @column-update="handleColumnNameUpdate"
-    />
-    
+    <TableHeader :online-users="userStore.onlineUsers" :online-count="userStore.onlineUserCount" />
+
+    <TableToolbar @add-row="handleAddRow" @add-column="handleAddColumn" @export="handleExport"
+      @simulate="simulateRemoteEdit" :is-connected="userStore.isConnected" />
+
+    <TableGrid :columns="tableStore.columns" :table-data="tableStore.tableData"
+      :get-cell-value="tableStore.getCellValue" :get-editing-user="getEditingUser" :get-cell-class="getCellClass"
+      @cell-input="handleCellInput" @cell-focus="handleCellFocus" @cell-blur="handleCellBlur"
+      @column-update="handleColumnNameUpdate" />
+
     <TableStats :statistics="tableStore.statistics" :data-stats="dataStats" />
-    
+
     <OperationLog :logs="tableStore.recentLogs" />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted } from 'vue'
+import * as XLSX from 'xlsx'
 import { useUserStore } from '@/stores/userStore'
 import { useTableStore } from '@/stores/tableStore'
 import TableHeader from './table/TableHeader.vue'
@@ -105,10 +91,29 @@ const handleAddColumn = () => {
 }
 
 const handleExport = () => {
-  const data = tableStore.exportData()
-  console.log('导出数据:', data)
-  console.table(data)
-  alert('数据已导出到控制台（按 F12 查看）')
+  const columns = tableStore.columns
+  const rows = tableStore.tableData
+
+  const header = ['行号', ...columns.map((c, i) => (c.name && String(c.name).trim()) || `列${i + 1}`)]
+  const body = rows.map((row, rowIndex) => {
+    const rowCells = [rowIndex + 1]
+    columns.forEach((col) => {
+      rowCells.push(row?.cells?.[col.id] ?? '')
+    })
+    return rowCells
+  })
+
+  const ws = XLSX.utils.aoa_to_sheet([header, ...body])
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '表格')
+
+  const d = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  const filename = `协同表格导出_${ts}.xlsx`
+
+  XLSX.writeFile(wb, filename, { compression: true })
+  alert('Excel 已下载')
   tableStore.addLog('导出了数据', userStore.currentUser.name, userStore.currentUser.color)
 }
 
@@ -118,21 +123,21 @@ const simulateRemoteEdit = () => {
     { name: '李四', color: '#3b82f6' },
     { name: '王五', color: '#8b5cf6' }
   ]
-  
+
   const randomUser = mockUsers[Math.floor(Math.random() * mockUsers.length)]
   const randomRow = Math.floor(Math.random() * tableStore.tableData.length)
   const randomCol = Math.floor(Math.random() * tableStore.columns.length)
   const cellKey = `${randomRow}_${randomCol}`
-  
+
   tableStore.setEditingCell(cellKey, {
     userId: 'remote_' + Math.random(),
     userName: randomUser.name,
     userColor: randomUser.color,
     instanceId: 'simulation'
   }, false) // 模拟不广播
-  
+
   tableStore.addLog(`开始编辑单元格 [${randomRow + 1}, ${randomCol + 1}]`, randomUser.name, randomUser.color)
-  
+
   setTimeout(() => {
     tableStore.setCellValue(randomRow, randomCol, '模拟编辑 - ' + Date.now().toString().slice(-4), false)
     tableStore.setEditingCell(cellKey, null, false)
@@ -142,16 +147,19 @@ const simulateRemoteEdit = () => {
 
 const initCollaboration = () => {
   console.log('[CollaborativeTable] 初始化协同功能')
-  
+
+  // 确保用户填写真实姓名（用于在线列表与编辑提示）
+  userStore.ensureUserName()
+
   // 初始化用户同步
   userStore.initSync()
-  
+
   // 初始化表格同步（传入同步管理器）
   const syncManager = userStore.getSyncManager()
   if (syncManager) {
     tableStore.initSync(syncManager)
   }
-  
+
   tableStore.addLog('加入了协作', userStore.currentUser.name, userStore.currentUser.color)
 }
 

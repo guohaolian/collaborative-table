@@ -1,0 +1,12 @@
+# /etc/default/collab-table-ws
+# systemd EnvironmentFile for collab-table-ws.service
+
+# 只监听本机，配合 Nginx /ws 反代更安全
+HOST=127.0.0.1
+PORT=1234
+
+# 可选：状态落盘（重启不丢数据）
+STATE_FILE=/var/lib/collab-table/state.json
+
+# 如需自定义 Node 环境可加：
+# NODE_ENV=production

@@ -25,3 +25,4 @@ dist-ssr
 
 # ReCode local database
 .recode
+.env.local

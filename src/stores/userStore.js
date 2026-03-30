@@ -3,14 +3,19 @@ import { ref, computed } from 'vue'
 import SyncManager from '@/utils/syncManager'
 
 export const useUserStore = defineStore('user', () => {
+  const STORAGE_KEYS = {
+    name: 'collab_table_user_name',
+    color: 'collab_table_user_color'
+  }
+
   // 同步管理器
   let syncManager = null
   
   // 当前标签页的用户信息
   const currentUser = ref({
     id: 'user_' + Math.random().toString(36).substr(2, 9),
-    name: '用户' + Math.floor(Math.random() * 100),
-    color: generateColor(),
+    name: '',
+    color: '',
     avatar: '',
     instanceId: '' // 标签页实例ID
   })
@@ -31,62 +36,128 @@ export const useUserStore = defineStore('user', () => {
     return colors[Math.floor(Math.random() * colors.length)]
   }
 
-  // 初始化同步管理器
-  const initSync = () => {
-    if (!syncManager) {
-      syncManager = new SyncManager('collaborative-table-sync')
-      currentUser.value.instanceId = syncManager.instanceId
-      
-      // 监听其他标签页用户上线
-      syncManager.on('user_online', (data) => {
-        console.log('[UserStore] 其他标签页上线:', data.user)
-        if (data.user && !onlineUsers.value.find(u => u.instanceId === data.user.instanceId)) {
-          onlineUsers.value.push(data.user)
-        }
-        
-        // 响应同步请求，告诉新标签页我的信息（只发送可序列化的数据）
+  function safeGetItem(key) {
+    try {
+      return localStorage.getItem(key)
+    } catch {
+      return null
+    }
+  }
+
+  function safeSetItem(key, value) {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      // ignore
+    }
+  }
+
+  const initLocalProfile = () => {
+    if (!currentUser.value.color) {
+      const storedColor = safeGetItem(STORAGE_KEYS.color)
+      currentUser.value.color = storedColor || generateColor()
+      if (!storedColor) safeSetItem(STORAGE_KEYS.color, currentUser.value.color)
+    }
+
+    if (!currentUser.value.name) {
+      const storedName = safeGetItem(STORAGE_KEYS.name)
+      currentUser.value.name = storedName || ('用户' + Math.floor(Math.random() * 100))
+    }
+  }
+
+  // 确保用户填写“真实姓名”（保存到本地；用于在线列表与编辑提示）
+  const ensureUserName = () => {
+    initLocalProfile()
+
+    const storedName = safeGetItem(STORAGE_KEYS.name)
+    if (storedName && storedName.trim()) {
+      currentUser.value.name = storedName.trim()
+      return currentUser.value.name
+    }
+
+    if (typeof window === 'undefined' || typeof window.prompt !== 'function') {
+      return currentUser.value.name
+    }
+
+    const input = window.prompt('请输入你的姓名（将显示给协作中的其他人）', currentUser.value.name || '')
+    const name = (input || '').trim()
+    if (name) {
+      const normalized = name.slice(0, 20)
+      currentUser.value.name = normalized
+      safeSetItem(STORAGE_KEYS.name, normalized)
+
+      // 如果已经连上服务端，重新发送 hello 更新用户信息
+      if (syncManager && isConnected.value) {
         syncManager.broadcast({
-          type: 'user_info',
+          type: 'hello',
           user: {
             id: currentUser.value.id,
             name: currentUser.value.name,
             color: currentUser.value.color,
+            avatar: currentUser.value.avatar,
+            instanceId: currentUser.value.instanceId
+          }
+        })
+      }
+    }
+
+    return currentUser.value.name
+  }
+
+  // 初始化同步管理器
+  const initSync = () => {
+    initLocalProfile()
+    if (!syncManager) {
+      syncManager = new SyncManager()
+      currentUser.value.instanceId = syncManager.instanceId
+
+      // 连接状态
+      syncManager.on('connected', () => {
+        isConnected.value = true
+
+        // 向服务端登记自己（服务端会下发 user_list + sync_response，并广播 user_online）
+        syncManager.broadcast({
+          type: 'hello',
+          user: {
+            id: currentUser.value.id,
+            name: currentUser.value.name,
+            color: currentUser.value.color,
+            avatar: currentUser.value.avatar,
             instanceId: currentUser.value.instanceId
           }
         })
       })
 
-      // 监听其他标签页用户信息
-      syncManager.on('user_info', (data) => {
-        if (data.user && !onlineUsers.value.find(u => u.instanceId === data.user.instanceId)) {
+      syncManager.on('disconnected', () => {
+        isConnected.value = false
+        onlineUsers.value = []
+      })
+      
+      // 服务端下发在线用户列表
+      syncManager.on('user_list', (data) => {
+        const users = Array.isArray(data.users) ? data.users : []
+        // 以 instanceId 去重
+        const map = new Map()
+        users.forEach(u => {
+          if (u && u.instanceId) map.set(u.instanceId, u)
+        })
+        onlineUsers.value = Array.from(map.values())
+      })
+
+      // 监听用户上线
+      syncManager.on('user_online', (data) => {
+        if (data.user && data.user.instanceId && !onlineUsers.value.find(u => u.instanceId === data.user.instanceId)) {
           onlineUsers.value.push(data.user)
         }
       })
 
-      // 监听其他标签页用户下线
+      // 监听用户下线
       syncManager.on('user_offline', (data) => {
-        console.log('[UserStore] 其他标签页下线:', data.instanceId)
         const index = onlineUsers.value.findIndex(u => u.instanceId === data.instanceId)
         if (index > -1) {
           onlineUsers.value.splice(index, 1)
         }
       })
-
-      // 添加当前用户到在线列表
-      onlineUsers.value.push(currentUser.value)
-      
-      // 广播自己上线（只发送可序列化的数据）
-      syncManager.broadcast({
-        type: 'user_online',
-        user: {
-          id: currentUser.value.id,
-          name: currentUser.value.name,
-          color: currentUser.value.color,
-          instanceId: currentUser.value.instanceId
-        }
-      })
-
-      isConnected.value = true
     }
   }
 
@@ -96,11 +167,17 @@ export const useUserStore = defineStore('user', () => {
       syncManager.destroy()
       syncManager = null
     }
+    isConnected.value = false
+    onlineUsers.value = []
   }
 
   // 设置当前用户信息
   const setCurrentUser = (userInfo) => {
     currentUser.value = { ...currentUser.value, ...userInfo }
+
+    // 仅持久化用户可识别信息
+    if (currentUser.value.name) safeSetItem(STORAGE_KEYS.name, currentUser.value.name)
+    if (currentUser.value.color) safeSetItem(STORAGE_KEYS.color, currentUser.value.color)
   }
 
   // 添加在线用户（仅用于模拟，实际由其他标签页广播）
@@ -148,6 +225,7 @@ export const useUserStore = defineStore('user', () => {
     removeOnlineUser,
     updateOnlineUsers,
     setConnected,
+    ensureUserName,
     initSync,
     destroySync,
     getSyncManager

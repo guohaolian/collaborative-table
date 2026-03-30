@@ -1,6 +1,6 @@
 # 多人实时协同表格系统
 
-> 基于 Vue 3 + Vite + Pinia + Vue Router 的实时协同编辑项目
+> 基于 Vue 3 + Vite + Pinia + Vue Router 的实时协同编辑项目（WebSocket 真·多用户协作）
 
 ## 🚀 快速开始
 
@@ -8,8 +8,17 @@
 # 安装依赖
 npm install
 
-# 启动开发服务器（自动打开浏览器）
+# 1) 启动协作 WebSocket 服务（另开一个终端）
+npm run dev:ws
+
+# 2) 启动前端开发服务器（自动打开浏览器）
+# 默认情况下无需配置 VITE_WS_URL：
+# - 前端在 http://localhost:3000 时，会自动连接 ws://localhost:1234
 npm run dev
+
+# （可选）自定义前端连接地址：
+# - 复制 .env.example 为 .env.local 并修改 VITE_WS_URL
+# - 或直接在环境变量里设置 VITE_WS_URL
 
 # 构建生产版本
 npm run build
@@ -17,6 +26,20 @@ npm run build
 # 预览生产构建
 npm run preview
 ```
+
+### ✅ 本地多用户验证方式
+
+- 先确保 `npm run dev:ws` 正在运行（默认 `ws://localhost:1234`）
+- 在浏览器打开两个不同窗口/不同电脑访问前端页面
+- 顶部会显示在线人数，编辑单元格/新增行列会实时同步
+
+### 📄 部署文档指引（阿里云 / 仅 IP / 80 端口被占用）
+
+- 详细部署步骤见：[DEPLOYMENT_UBUNTU_IP_ONLY.md](DEPLOYMENT_UBUNTU_IP_ONLY.md)
+- 现成模板：
+	- Nginx（监听 8055 + `/ws` 反代）：[deploy/nginx/frontend_table.config](deploy/nginx/frontend_table.config)
+	- systemd（开机自启 + 自动重启）：[deploy/systemd/collab-table-ws.service](deploy/systemd/collab-table-ws.service)
+	- systemd 环境变量： [deploy/systemd/collab-table-ws.default](deploy/systemd/collab-table-ws.default)
 
 ## 📦 项目结构
 
@@ -47,6 +70,15 @@ collaborative-table-project/
 ├── index.html               # HTML 模板
 ├── vite.config.js           # Vite 配置
 ├── package.json             # 依赖配置
+├── deploy/
+│   ├── nginx/
+│   │   └── frontend_table.config   # Nginx 站点示例（8055 + /ws）
+│   └── systemd/
+│       ├── collab-table-ws.service # systemd 服务（自启/重启）
+│       └── collab-table-ws.default # systemd 环境变量
+├── server/
+│   └── wsServer.js          # WebSocket 协作服务端（保存状态 + 广播）
+├── DEPLOYMENT_UBUNTU_IP_ONLY.md    # Ubuntu 部署详解（仅 IP、80 端口占用）
 └── README.md                # 项目说明
 ```
 
@@ -83,7 +115,7 @@ collaborative-table-project/
 - **添加行/列**：点击工具栏按钮添加
 - **编辑单元格**：直接点击单元格输入
 - **查看在线用户**：顶部显示所有在线用户
-- **导出数据**：点击导出按钮（数据在控制台查看）
+- **导出数据**：点击导出按钮（自动下载 Excel 文件）
 - **模拟远程编辑**：演示多人协同效果
 
 ### 3. 关于页面
@@ -91,6 +123,17 @@ collaborative-table-project/
 - 了解技术架构和实现原理
 
 ## 🏗️ 核心实现
+
+### WebSocket 协作服务
+
+- 服务端：通过 `ws` 维护在线用户列表与表格状态（内存，可选落盘）并广播操作
+- 前端：通过 `SyncManager`（WebSocket）把操作发送到服务端并接收其他用户操作
+
+相关代码：
+- [server/wsServer.js](server/wsServer.js)
+- [src/utils/syncManager.js](src/utils/syncManager.js)
+- [src/stores/userStore.js](src/stores/userStore.js)
+- [src/stores/tableStore.js](src/stores/tableStore.js)
 
 ### Pinia 状态管理
 
@@ -166,12 +209,23 @@ cd collaborative-table-project
 # 2. 安装依赖
 npm install
 
-# 3. 启动开发服务器
+# 3. 复制环境变量文件并修改 WebSocket 地址
+# Windows（PowerShell/CMD）
+# copy .env.example .env.local
+
+# Linux/macOS
+cp .env.example .env.local
+
+# 4. 启动协作 WebSocket 服务（终端 A）
+npm run dev:ws
+
+# 5. 启动前端开发服务器（终端 B）
 npm run dev
 
 # 4. 在浏览器访问
 # http://localhost:3000
 ```
+
 
 ### 添加新功能
 1. 在 `src/stores/` 中添加新的状态

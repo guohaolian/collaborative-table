@@ -1,0 +1,39 @@
+# /etc/systemd/system/collab-table-ws.service
+# 协同表格 WebSocket 协作服务（开机自启 + 自动重启）
+
+[Unit]
+Description=Collaborative Table WebSocket Server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# systemd 默认 PATH 可能不包含 /usr/local/bin（若你用 nvm 或自定义安装 Node 很常见）
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 运行用户：建议与 nginx 一致（Ubuntu 通常是 www-data）
+User=www-data
+Group=www-data
+
+# 环境变量（请在服务器上复制并按需修改）
+EnvironmentFile=-/etc/default/collab-table-ws
+
+# 工作目录（项目根目录）
+WorkingDirectory=/opt/collab_table/backend
+
+# 启动命令（使用 env 查找 node，更通用）
+ExecStart=/usr/bin/env node server/wsServer.js
+
+Restart=always
+RestartSec=2
+
+# 日志进 journal：查看 `journalctl -u collab-table-ws -f`
+StandardOutput=journal
+StandardError=journal
+
+# 可选：避免文件句柄不足
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

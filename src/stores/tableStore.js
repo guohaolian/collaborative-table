@@ -39,6 +39,22 @@ export const useTableStore = defineStore('table', () => {
   // 同步管理器引用（由 userStore 提供）
   let syncManager = null
 
+  const generateId = (prefix) => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `${prefix}_${crypto.randomUUID()}`
+    }
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+  }
+
+  const sortByCreatedAtThenId = (items) => {
+    items.sort((a, b) => {
+      const ta = typeof a.createdAt === 'number' ? a.createdAt : 0
+      const tb = typeof b.createdAt === 'number' ? b.createdAt : 0
+      if (ta !== tb) return ta - tb
+      return String(a.id || '').localeCompare(String(b.id || ''))
+    })
+  }
+
   // 初始化跨标签页同步
   const initSync = (sync) => {
     syncManager = sync
@@ -61,9 +77,6 @@ export const useTableStore = defineStore('table', () => {
       // 监听编辑状态
       syncManager.on('editing_state', handleRemoteEditingState)
       
-      // 监听同步请求
-      syncManager.on('sync_request', handleSyncRequest)
-      
       // 监听同步响应
       syncManager.on('sync_response', handleSyncResponse)
 
@@ -71,6 +84,13 @@ export const useTableStore = defineStore('table', () => {
       setTimeout(() => {
         syncManager.requestSync()
       }, 500)
+
+      // 断线重连后再次请求全量同步
+      syncManager.on('connected', () => {
+        setTimeout(() => {
+          syncManager.requestSync()
+        }, 300)
+      })
     }
   }
 
@@ -106,7 +126,11 @@ export const useTableStore = defineStore('table', () => {
     const { row } = data
     
     if (row && !tableData.value.find(r => r.id === row.id)) {
-      tableData.value.push(row)
+      tableData.value.push({
+        ...row,
+        createdAt: typeof row.createdAt === 'number' ? row.createdAt : Date.now()
+      })
+      sortByCreatedAtThenId(tableData.value)
       version.value++
     }
   }
@@ -117,7 +141,11 @@ export const useTableStore = defineStore('table', () => {
     const { column } = data
     
     if (column && !columns.value.find(c => c.id === column.id)) {
-      columns.value.push(column)
+      columns.value.push({
+        ...column,
+        createdAt: typeof column.createdAt === 'number' ? column.createdAt : Date.now()
+      })
+      sortByCreatedAtThenId(columns.value)
       version.value++
     }
   }
@@ -133,27 +161,23 @@ export const useTableStore = defineStore('table', () => {
     }
   }
 
-  // 处理同步请求
-  const handleSyncRequest = (data) => {
-    console.log('[TableStore] 收到同步请求，发送当前数据')
-    if (syncManager) {
-      // 只发送可序列化的数据
-      syncManager.respondSync({
-        columns: JSON.parse(JSON.stringify(columns.value)),
-        tableData: JSON.parse(JSON.stringify(tableData.value)),
-        version: version.value
-      })
-    }
-  }
-
   // 处理同步响应
   const handleSyncResponse = (data) => {
     console.log('[TableStore] 收到同步响应:', data)
     if (data.data && data.data.columns && data.data.tableData) {
       // 只在版本号更新时同步
       if (data.data.version > version.value) {
-        columns.value = data.data.columns
-        tableData.value = data.data.tableData
+        columns.value = (data.data.columns || []).map((c) => ({
+          ...c,
+          createdAt: typeof c.createdAt === 'number' ? c.createdAt : 0
+        }))
+        tableData.value = (data.data.tableData || []).map((r) => ({
+          ...r,
+          cells: r.cells || {},
+          createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0
+        }))
+        sortByCreatedAtThenId(columns.value)
+        sortByCreatedAtThenId(tableData.value)
         version.value = data.data.version
         console.log('[TableStore] 同步完成')
       }
@@ -194,10 +218,12 @@ export const useTableStore = defineStore('table', () => {
   // 添加行（带同步）
   const addRow = (broadcast = true) => {
     const newRow = {
-      id: 'row_' + Date.now(),
-      cells: {}
+      id: generateId('row'),
+      cells: {},
+      createdAt: Date.now()
     }
     tableData.value.push(newRow)
+    sortByCreatedAtThenId(tableData.value)
     version.value++
     statistics.value.totalOperations++
     
@@ -215,11 +241,13 @@ export const useTableStore = defineStore('table', () => {
   // 添加列（带同步）
   const addColumn = (broadcast = true) => {
     const newCol = {
-      id: 'col_' + Date.now(),
+      id: generateId('col'),
       name: '新列',
-      width: 180
+      width: 180,
+      createdAt: Date.now()
     }
     columns.value.push(newCol)
+    sortByCreatedAtThenId(columns.value)
     version.value++
     statistics.value.totalOperations++
     
